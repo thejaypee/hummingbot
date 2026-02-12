@@ -324,6 +324,29 @@ CONDA_ENV=hummingbot
 4. Add backtesting support
 5. Write comprehensive tests
 
+## Live Trading Simulations
+
+### Mainnet Pricing with Testnet Execution
+For realistic testing without capital risk, developers can configure bots to use **Mainnet Pricing** while executing trades on **Sepolia Testnet**.
+
+**Requirements:**
+1.  **Mainnet RPC**: A valid Mainnet RPC URL in `.env.local` (`MAINNET_RPC_URL`).
+2.  **Sepolia RPC**: A valid Sepolia RPC URL in `.env.local` (`ALCHEMY_RPC_URL` or similar).
+
+**Implementation Pattern:**
+-   **Pricing**: Fetch real-time prices (e.g., from Uniswap V3 Quoter on Mainnet).
+-   **Execution**: Execute swaps on the Testnet (Sepolia) when Mainnet signals trigger.
+-   **Dashboard**: Report profits/losses based on the Mainnet price movements to simulate real-world performance.
+
+**Example Configuration (`.env.local`):**
+```bash
+# Execution Layer (Sepolia)
+ALCHEMY_RPC_URL=https://eth-sepolia.g.alchemy.com/v2/YOUR_KEY
+
+# Pricing Layer (Mainnet)
+MAINNET_RPC_URL=https://eth-mainnet.g.alchemy.com/v2/YOUR_KEY
+```
+
 ## Special Considerations
 
 1. Some tests are intentionally ignored due to known issues
