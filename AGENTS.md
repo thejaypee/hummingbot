@@ -332,8 +332,11 @@ Simulated live trading uses two chains in parallel to achieve realistic performa
 **Architecture (`uniswap_live_trader.py`):**
 - **Pricing Layer (Mainnet)**: `w3_mainnet` connects to Ethereum Mainnet via `MAINNET_RPC_URL`. Prices are fetched from the Uniswap V3 QuoterV2 (`0x61fFE014bA17989E743c5F6cB21bF9697530B21e`) on the WETH/USDC 0.05% pool (deepest liquidity). Chain ID validated as `1` on startup.
 - **Execution Layer (Base Sepolia)**: `w3_testnet` connects to Base Sepolia via `TESTNET_RPC_URL`. Swaps execute on SwapRouter02 (`0x94cC0AaC535CCDB3C01d6787D6413C739ae12bc4`) using the WETH/USDC 0.30% pool (deepest Base Sepolia liquidity). Chain ID validated as `84532` on startup.
-- **PnL Tracking**: All profit/loss calculations use Mainnet prices, not testnet prices. Entry and exit prices are recorded from the Mainnet quoter at the moment of each testnet swap.
-- **Bidirectional Swaps**: Both WETH->USDC (entry) and USDC->WETH (exit) execute as real on-chain Base Sepolia transactions.
+- **Independent Position Management**: Each BUY creates an independent position tracking its own entry price, USDC allocation, and gas costs. Positions are checked for TP/SL independently every block — no shared state between positions.
+- **Position Persistence**: Open positions are restored from `bot_trades.json` on startup by counting unmatched BUYs vs SELLs. Survives crashes and restarts without orphaning positions.
+- **PnL Tracking (Net of Gas)**: All profit/loss calculations use Mainnet prices. Gas costs (ETH spent on entry + exit swaps) are converted to USD using the Mainnet ETH price and subtracted from gross PnL to compute net PnL per trade.
+- **Resilience**: Trading loop catches all transient errors (DNS, network, RPC) with exponential backoff (2s to 60s). Only `KeyboardInterrupt` stops the trader.
+- **Bidirectional Swaps**: Both WETH->USDC (entry) and USDC->WETH (exit) execute as real on-chain Base Sepolia transactions. Each position swaps only its own USDC allocation on exit.
 
 **Why Base Sepolia over Ethereum Sepolia:**
 Ethereum Sepolia has near-zero Uniswap V3 liquidity — pools drain from a single small trade. Base Sepolia has deep liquidity (1000x more) in the WETH/USDC 0.30% pool, supporting trades up to 1 WETH without SPL errors.

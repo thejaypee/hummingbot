@@ -261,8 +261,9 @@ class UniswapLiveTrader:
     # -- Swaps (Base Sepolia) -----------------------------------------------
 
     def _execute_swap(self, token_in, token_out, amount_in_wei, label):
+        """Returns (tx_hash, gas_cost_eth) or (None, 0)."""
         if not self.ensure_approval(token_in, amount_in_wei):
-            return None
+            return None, 0
         try:
             gas_params = self.get_gas_params()
             tx = self.testnet_router.functions.exactInputSingle({
@@ -286,15 +287,20 @@ class UniswapLiveTrader:
             receipt = self.w3_testnet.eth.wait_for_transaction_receipt(
                 tx_hash, timeout=120)
             if receipt['status'] == 1:
+                gas_cost_wei = (receipt['gasUsed']
+                                * receipt['effectiveGasPrice'])
+                gas_cost_eth = float(self.w3_testnet.from_wei(
+                    gas_cost_wei, 'ether'))
                 print(
                     f"  {label} confirmed "
-                    f"(gas used: {receipt['gasUsed']})")
-                return tx_hash.hex()
+                    f"(gas: {receipt['gasUsed']} units, "
+                    f"{gas_cost_eth:.6f} ETH)")
+                return tx_hash.hex(), gas_cost_eth
             print(f"  {label} reverted on-chain")
-            return None
+            return None, 0
         except Exception as e:
             print(f"  {label} error: {e}")
-            return None
+            return None, 0
 
     def swap_weth_to_usdc(self, amount_weth):
         amount_wei = int(amount_weth * 1e18)
@@ -305,6 +311,10 @@ class UniswapLiveTrader:
         amount_wei = int(amount_usdc * 1e6)
         return self._execute_swap(
             TESTNET_USDC, TESTNET_WETH, amount_wei, "USDC->WETH")
+
+    def gas_cost_usd(self, gas_eth, mainnet_price):
+        """Convert gas cost in ETH to USD using Mainnet price."""
+        return gas_eth * mainnet_price
 
     # -- Data sync ----------------------------------------------------------
 
@@ -464,30 +474,42 @@ class UniswapLiveTrader:
                 for i, pos in enumerate(open_positions):
                     change = mainnet_price / pos["entry_price"]
                     if change >= TAKE_PROFIT or change <= STOP_LOSS:
-                        pnl = ((mainnet_price - pos["entry_price"])
-                               * pos["amount"])
+                        # Gross PnL from price movement
+                        gross_pnl = ((mainnet_price - pos["entry_price"])
+                                     * pos["amount"])
                         tag = ("TAKE PROFIT" if change >= TAKE_PROFIT
                                else "STOP LOSS")
-                        print(
-                            f"  {tag} #{i + 1} at ${mainnet_price:.2f} "
-                            f"(entry ${pos['entry_price']:.2f}, "
-                            f"usdc {pos['usdc_held']:.2f}, "
-                            f"pnl ${pnl:.4f})")
 
                         # Swap only THIS position's USDC
                         tx = None
+                        gas_cost = 0
                         swap_amount = pos["usdc_held"]
                         avail = self.get_balance(TESTNET_USDC)
                         if swap_amount > avail:
                             swap_amount = avail
                         if swap_amount > 0.01:
-                            tx = self.swap_usdc_to_weth(swap_amount)
+                            tx, gas_eth = self.swap_usdc_to_weth(
+                                swap_amount)
+                            gas_cost = self.gas_cost_usd(
+                                gas_eth, mainnet_price)
 
-                        self.total_pnl += pnl
+                        # Total gas = entry gas + exit gas
+                        total_gas = (pos.get("entry_gas_usd", 0)
+                                     + gas_cost)
+                        net_pnl = gross_pnl - total_gas
+
+                        print(
+                            f"  {tag} #{i + 1} at ${mainnet_price:.2f} "
+                            f"(entry ${pos['entry_price']:.2f}, "
+                            f"gross ${gross_pnl:.4f}, "
+                            f"gas ${total_gas:.4f}, "
+                            f"net ${net_pnl:.4f})")
+
+                        self.total_pnl += net_pnl
                         self.trade_count += 1
                         self.record_trade(
                             "SELL", mainnet_price,
-                            pos["amount"], pnl, tx)
+                            pos["amount"], net_pnl, tx)
                         closed.append(i)
                         # Re-read balance after swap
                         if tx:
@@ -501,21 +523,27 @@ class UniswapLiveTrader:
                     blocks_since_signal = 0
 
                     if weth_bal >= POSITION_SIZE:
-                        # Get USDC balance before swap
                         usdc_before = self.get_balance(TESTNET_USDC)
                         print(
                             f"  ENTER at Mainnet price "
                             f"${mainnet_price:.2f}")
-                        tx = self.swap_weth_to_usdc(POSITION_SIZE)
+                        tx, gas_eth = self.swap_weth_to_usdc(
+                            POSITION_SIZE)
                         if tx:
+                            entry_gas_usd = self.gas_cost_usd(
+                                gas_eth, mainnet_price)
                             usdc_after = self.get_balance(TESTNET_USDC)
                             usdc_received = usdc_after - usdc_before
                             open_positions.append({
                                 "entry_price": mainnet_price,
                                 "amount": POSITION_SIZE,
-                                "usdc_held": usdc_received
+                                "usdc_held": usdc_received,
+                                "entry_gas_usd": entry_gas_usd
                             })
                             self.trade_count += 1
+                            print(
+                                f"  Got {usdc_received:.4f} USDC "
+                                f"(gas: ${entry_gas_usd:.4f})")
                             self.record_trade(
                                 "BUY", mainnet_price,
                                 POSITION_SIZE, 0, tx,
