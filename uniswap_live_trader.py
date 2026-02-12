@@ -1,83 +1,82 @@
 #!/usr/bin/env python3
 """
-🚀 LIVE UNISWAP TRADER - Real Blockchain Execution
-Executes actual swaps on Ethereum Sepolia 24/7
-Using SEPOLIA prices from the EXACT POOL being traded
+LIVE UNISWAP TRADER - Dual-Chain Architecture
+  Pricing:   Ethereum Mainnet Uniswap V3 (real market prices)
+  Execution: Base Sepolia Uniswap V3 (testnet swaps, no capital risk)
+  PnL:       Calculated from Mainnet prices for realistic performance tracking
 """
 
+import asyncio
+import json
 import os
 import sys
-import time
-import requests
-import json
-import asyncio
-from pathlib import Path
 from datetime import datetime
-from dotenv import load_dotenv
-from web3 import Web3
-from eth_account import Account
+from pathlib import Path
 
-# Load config
+import requests
+from dotenv import load_dotenv
+from eth_account import Account
+from web3 import Web3
+
 load_dotenv(Path("/home/sauly/hummingbot/.env.local"))
 load_dotenv(Path("/home/sauly/hummingbot/mcp/.env"))
 
-# Setup
-RPC_URL = os.getenv("ALCHEMY_RPC_URL")
+# RPC endpoints
+TESTNET_RPC = os.getenv("TESTNET_RPC_URL")
+MAINNET_RPC = os.getenv("MAINNET_RPC_URL")
 PRIVATE_KEY = os.getenv("ETHEREUM_PRIVATE_KEY")
-WALLET = os.getenv("ETHEREUM_WALLET_ADDRESS")
 API_SERVER = "http://localhost:4000"
 
-# Uniswap on Sepolia (Execution & Pricing)
-WETH = "0x7b79995e5f793A07Bc00c21412e50Ecae098E7f9"
-USDC = "0x1c7D4B196Cb0C7B01d743Fbc6116a902379C7238"
-ROUTER = "0xE592427A0AEce92De3Edee1F18E0157C05861564"
-QUOTER_V2 = "0xEd1f6473345F45b75F8179591dd5bA1888cf2FB3"
+# --- Mainnet Contracts (Pricing Layer) ---
+MAINNET_WETH = "0xC02aaA39b223FE8D0A0e5C4F27eAD9083C756Cc2"
+MAINNET_USDC = "0xA0b86991c6218b36c1d19D4a2e9Eb0cE3606eB48"
+MAINNET_QUOTER_V2 = "0x61fFE014bA17989E743c5F6cB21bF9697530B21e"
+MAINNET_FEE_TIER = 500  # 0.05% deepest WETH/USDC liquidity
+
+# --- Base Sepolia Contracts (Execution Layer) ---
+TESTNET_WETH = "0x4200000000000000000000000000000000000006"
+TESTNET_USDC = "0x036CbD53842c5426634e7929541eC2318f3dCF7e"
+TESTNET_ROUTER = "0x94cC0AaC535CCDB3C01d6787D6413C739ae12bc4"
+TESTNET_FEE_TIER = 3000  # 0.30% deepest Base Sepolia WETH/USDC liquidity
+TESTNET_CHAIN_ID = 84532
+TESTNET_NAME = "Base Sepolia"
 
 # Trading config
-# We use the 1% fee tier (10000) because that's where liquidity is on Sepolia
-FEE_TIER = 10000 
-POSITION_SIZE = 0.05  # WETH per trade
-TAKE_PROFIT = 1.04   # 4%
-STOP_LOSS = 0.975    # 2.5%
+POSITION_SIZE = 0.01  # WETH per trade (conservative for testnet)
+TAKE_PROFIT = 1.001   # 0.1% — very tight for active testing
+STOP_LOSS = 0.999     # 0.1% — very tight for active testing
 
-# Uniswap V3 SwapRouter ABI
+# SwapRouter02 ABI (no deadline in struct)
 ROUTER_ABI = [
     {
         "inputs": [
             {
                 "components": [
-                    {"internalType": "address", "name": "tokenIn", "type": "address"},
-                    {"internalType": "address", "name": "tokenOut", "type": "address"},
-                    {"internalType": "uint24", "name": "fee", "type": "uint24"},
-                    {"internalType": "address", "name": "recipient", "type": "address"},
-                    {"internalType": "uint256", "name": "deadline", "type": "uint256"},
-                    {"internalType": "uint256", "name": "amountIn", "type": "uint256"},
-                    {"internalType": "uint256", "name": "amountOutMinimum", "type": "uint256"},
-                    {"internalType": "uint160", "name": "sqrtPriceLimitX96", "type": "uint160"}
+                    {"name": "tokenIn", "type": "address"},
+                    {"name": "tokenOut", "type": "address"},
+                    {"name": "fee", "type": "uint24"},
+                    {"name": "recipient", "type": "address"},
+                    {"name": "amountIn", "type": "uint256"},
+                    {"name": "amountOutMinimum", "type": "uint256"},
+                    {"name": "sqrtPriceLimitX96", "type": "uint160"}
                 ],
-                "internalType": "struct ISwapRouter.ExactInputSingleParams",
                 "name": "params",
                 "type": "tuple"
             }
         ],
         "name": "exactInputSingle",
-        "outputs": [{"internalType": "uint256", "name": "amountOut", "type": "uint256"}],
-        "stateMutability": "payable",
-        "type": "function"
-    },
-    {
-        "inputs": [],
-        "name": "refundETH",
-        "outputs": [],
+        "outputs": [{"name": "amountOut", "type": "uint256"}],
         "stateMutability": "payable",
         "type": "function"
     }
 ]
 
-# ERC20 ABI
 ERC20_ABI = [
     {
-        "inputs": [{"name": "spender", "type": "address"}, {"name": "amount", "type": "uint256"}],
+        "inputs": [
+            {"name": "spender", "type": "address"},
+            {"name": "amount", "type": "uint256"}
+        ],
         "name": "approve",
         "outputs": [{"name": "", "type": "bool"}],
         "stateMutability": "nonpayable",
@@ -96,10 +95,19 @@ ERC20_ABI = [
         "outputs": [{"name": "", "type": "uint8"}],
         "stateMutability": "view",
         "type": "function"
+    },
+    {
+        "inputs": [
+            {"name": "owner", "type": "address"},
+            {"name": "spender", "type": "address"}
+        ],
+        "name": "allowance",
+        "outputs": [{"name": "", "type": "uint256"}],
+        "stateMutability": "view",
+        "type": "function"
     }
 ]
 
-# Uniswap V3 QuoterV2 ABI
 QUOTER_ABI = [
     {
         "inputs": [
@@ -127,188 +135,219 @@ QUOTER_ABI = [
     }
 ]
 
-# Token decimals cache
-TOKEN_DECIMALS = {}
 
 class UniswapLiveTrader:
     def __init__(self):
-        self.w3 = Web3(Web3.HTTPProvider(RPC_URL))
+        self.w3_mainnet = Web3(Web3.HTTPProvider(MAINNET_RPC))
+        self.w3_testnet = Web3(Web3.HTTPProvider(TESTNET_RPC))
         self.account = Account.from_key(PRIVATE_KEY)
-        self.positions = {}
-        self.trades = []
+        self.total_pnl = 0.0
+        self.trade_count = 0
 
-        if not self.w3.is_connected():
-            print("❌ Cannot connect to RPC")
+        if not self.w3_mainnet.is_connected():
+            print("Cannot connect to Mainnet RPC")
+            sys.exit(1)
+        if not self.w3_testnet.is_connected():
+            print(f"Cannot connect to {TESTNET_NAME} RPC")
             sys.exit(1)
 
-        print(f"✅ Connected to Sepolia")
-        print(f"   Wallet: {self.account.address}")
-        print(f"   RPC: {RPC_URL.split('/')[-1]}...")
-        print(f"   Pool: WETH/USDC (Fee: {FEE_TIER/10000:.2f}%)")
+        mainnet_chain = self.w3_mainnet.eth.chain_id
+        testnet_chain = self.w3_testnet.eth.chain_id
+        if mainnet_chain != 1:
+            print(
+                f"Mainnet RPC returned chain_id {mainnet_chain}, "
+                f"expected 1")
+            sys.exit(1)
+        if testnet_chain != TESTNET_CHAIN_ID:
+            print(
+                f"Testnet RPC returned chain_id {testnet_chain}, "
+                f"expected {TESTNET_CHAIN_ID}")
+            sys.exit(1)
+
+        self.mainnet_quoter = self.w3_mainnet.eth.contract(
+            address=MAINNET_QUOTER_V2, abi=QUOTER_ABI)
+        self.testnet_router = self.w3_testnet.eth.contract(
+            address=TESTNET_ROUTER, abi=ROUTER_ABI)
+
+        print(f"Connected | Mainnet (pricing) + {TESTNET_NAME} (execution)")
+        print(f"  Wallet:  {self.account.address}")
+        print(
+            f"  Pricing: Mainnet WETH/USDC "
+            f"{MAINNET_FEE_TIER / 10000:.2f}% pool")
+        print(
+            f"  Swaps:   {TESTNET_NAME} WETH/USDC "
+            f"{TESTNET_FEE_TIER / 10000:.2f}% pool")
+
+    # -- Pricing (Mainnet) -------------------------------------------------
+
+    def get_mainnet_price(self, amount_weth=1.0):
+        try:
+            amount_in = int(amount_weth * 1e18)
+            result = self.mainnet_quoter.functions.quoteExactInputSingle({
+                'tokenIn': MAINNET_WETH,
+                'tokenOut': MAINNET_USDC,
+                'amountIn': amount_in,
+                'fee': MAINNET_FEE_TIER,
+                'sqrtPriceLimitX96': 0
+            }).call()
+            return result[0] / 1e6 / amount_weth
+        except Exception as e:
+            print(f"  Mainnet price error: {e}")
+            return None
+
+    # -- Execution helpers (Base Sepolia) -----------------------------------
 
     def get_gas_params(self):
-        """Get EIP-1559 gas parameters suitable for Sepolia"""
         try:
-            latest = self.w3.eth.get_block('latest')
-            base_fee = latest.get('baseFeePerGas', self.w3.eth.gas_price)
-            max_priority = self.w3.to_wei(2, 'gwei')
+            latest = self.w3_testnet.eth.get_block('latest')
+            base_fee = latest.get(
+                'baseFeePerGas', self.w3_testnet.eth.gas_price)
+            max_priority = self.w3_testnet.to_wei(1, 'gwei')
             max_fee = base_fee * 2 + max_priority
             return {
                 'maxFeePerGas': max_fee,
-                'maxPriorityFeePerGas': max_priority,
+                'maxPriorityFeePerGas': max_priority
             }
         except Exception:
-            return {'gasPrice': self.w3.eth.gas_price * 2}
+            return {'gasPrice': self.w3_testnet.eth.gas_price * 2}
 
     def get_nonce(self):
-        return self.w3.eth.get_transaction_count(self.account.address, 'pending')
-
-    def get_price(self, amount_weth=1.0):
-        """Get WETH/USDC price from using the EXACT SAME params as execution"""
-        try:
-            quoter = self.w3.eth.contract(address=QUOTER_V2, abi=QUOTER_ABI)
-            amount_in = int(amount_weth * 1e18)
-
-            # Using Sepolia WETH, Sepolia USDC, and the trading FEE_TIER
-            result = quoter.functions.quoteExactInputSingle({
-                'tokenIn': WETH,
-                'tokenOut': USDC,
-                'amountIn': amount_in,
-                'fee': FEE_TIER,
-                'sqrtPriceLimitX96': 0
-            }).call()
-
-            amount_out = result[0]
-            price = amount_out / 1e6 / amount_weth
-            return price
-        except Exception as e:
-            print(f"⚠️  Price fetch error: {e}")
-            return None
-
-    def get_decimals(self, token_addr):
-        if token_addr not in TOKEN_DECIMALS:
-            contract = self.w3.eth.contract(address=token_addr, abi=ERC20_ABI)
-            TOKEN_DECIMALS[token_addr] = contract.functions.decimals().call()
-        return TOKEN_DECIMALS[token_addr]
+        return self.w3_testnet.eth.get_transaction_count(
+            self.account.address, 'pending')
 
     def get_balance(self, token_addr):
         try:
-            contract = self.w3.eth.contract(address=token_addr, abi=ERC20_ABI)
-            balance = contract.functions.balanceOf(self.account.address).call()
-            decimals = self.get_decimals(token_addr)
+            contract = self.w3_testnet.eth.contract(
+                address=token_addr, abi=ERC20_ABI)
+            decimals = contract.functions.decimals().call()
+            balance = contract.functions.balanceOf(
+                self.account.address).call()
             return balance / (10 ** decimals)
         except Exception as e:
-            print(f"Error getting balance: {e}")
-            return 0
+            print(f"  Balance error: {e}")
+            return 0.0
 
-    def approve_token(self, token_addr, amount_wei):
+    def ensure_approval(self, token_addr, amount_wei):
+        contract = self.w3_testnet.eth.contract(
+            address=token_addr, abi=ERC20_ABI)
+        current = contract.functions.allowance(
+            self.account.address, TESTNET_ROUTER).call()
+        if current >= amount_wei:
+            return True
         try:
-            contract = self.w3.eth.contract(address=token_addr, abi=ERC20_ABI)
             gas_params = self.get_gas_params()
-            tx = contract.functions.approve(ROUTER, amount_wei).build_transaction({
+            tx = contract.functions.approve(
+                TESTNET_ROUTER, 2**256 - 1
+            ).build_transaction({
                 'from': self.account.address,
                 'nonce': self.get_nonce(),
                 'gas': 100000,
                 **gas_params,
             })
-
             signed = self.account.sign_transaction(tx)
-            tx_hash = self.w3.eth.send_raw_transaction(signed.raw_transaction)
-            receipt = self.w3.eth.wait_for_transaction_receipt(tx_hash, timeout=120)
-
+            tx_hash = self.w3_testnet.eth.send_raw_transaction(
+                signed.raw_transaction)
+            receipt = self.w3_testnet.eth.wait_for_transaction_receipt(
+                tx_hash, timeout=120)
             if receipt['status'] == 1:
-                print(f"✅ Token approved: {tx_hash.hex()[:16]}...")
+                print(f"  Approved: {tx_hash.hex()[:16]}...")
                 return True
+            print("  Approval failed on-chain")
             return False
         except Exception as e:
-            print(f"⚠️  Approval error: {e}")
+            print(f"  Approval error: {e}")
             return False
 
-    def swap_weth_to_usdc(self, amount_weth):
-        """Execute swap on Sepolia using the configured FEE_TIER"""
+    # -- Swaps (Base Sepolia) -----------------------------------------------
+
+    def _execute_swap(self, token_in, token_out, amount_in_wei, label):
+        if not self.ensure_approval(token_in, amount_in_wei):
+            return None
         try:
-            amount_wei = int(amount_weth * 1e18)
-
-            print(f"📝 Approving {amount_weth} WETH...")
-            if not self.approve_token(WETH, amount_wei):
-                return None
-
-            router = self.w3.eth.contract(address=ROUTER, abi=ROUTER_ABI)
             gas_params = self.get_gas_params()
-            deadline = int(time.time()) + 300
-
-            tx = router.functions.exactInputSingle({
-                'tokenIn': WETH,
-                'tokenOut': USDC,
-                'fee': FEE_TIER,
+            tx = self.testnet_router.functions.exactInputSingle({
+                'tokenIn': token_in,
+                'tokenOut': token_out,
+                'fee': TESTNET_FEE_TIER,
                 'recipient': self.account.address,
-                'deadline': deadline,
-                'amountIn': amount_wei,
+                'amountIn': amount_in_wei,
                 'amountOutMinimum': 0,
                 'sqrtPriceLimitX96': 0
             }).build_transaction({
                 'from': self.account.address,
                 'nonce': self.get_nonce(),
-                'gas': 300000,
+                'gas': 600000,
                 **gas_params,
             })
-
-            print(f"🔄 Executing swap: {amount_weth} WETH → USDC (Fee: {FEE_TIER})")
-            
             signed = self.account.sign_transaction(tx)
-            tx_hash = self.w3.eth.send_raw_transaction(signed.raw_transaction)
-
-            print(f"⏳ Confirming transaction: {tx_hash.hex()[:16]}...")
-            receipt = self.w3.eth.wait_for_transaction_receipt(tx_hash, timeout=120)
-
+            tx_hash = self.w3_testnet.eth.send_raw_transaction(
+                signed.raw_transaction)
+            print(f"  {label} tx sent: {tx_hash.hex()[:16]}...")
+            receipt = self.w3_testnet.eth.wait_for_transaction_receipt(
+                tx_hash, timeout=120)
             if receipt['status'] == 1:
-                print(f"✅ SWAP SUCCESSFUL!")
-                print(f"   TX: {tx_hash.hex()}")
-                return {
-                    'tx': tx_hash.hex(),
-                    'amount': amount_weth,
-                    'status': 'success'
-                }
-            else:
-                print(f"❌ Swap failed on-chain")
-                return None
-
+                print(
+                    f"  {label} confirmed "
+                    f"(gas used: {receipt['gasUsed']})")
+                return tx_hash.hex()
+            print(f"  {label} reverted on-chain")
+            return None
         except Exception as e:
-            print(f"❌ Swap error: {e}")
+            print(f"  {label} error: {e}")
             return None
 
-    def record_trade(self, trade_type, price, amount, profit=0):
+    def swap_weth_to_usdc(self, amount_weth):
+        amount_wei = int(amount_weth * 1e18)
+        return self._execute_swap(
+            TESTNET_WETH, TESTNET_USDC, amount_wei, "WETH->USDC")
+
+    def swap_usdc_to_weth(self, amount_usdc):
+        amount_wei = int(amount_usdc * 1e6)
+        return self._execute_swap(
+            TESTNET_USDC, TESTNET_WETH, amount_wei, "USDC->WETH")
+
+    # -- Data sync ----------------------------------------------------------
+
+    def record_trade(self, trade_type, mainnet_price, amount,
+                     profit=0, tx_hash=None, usdc_received=None):
         try:
-            response = requests.post(
+            payload = {
+                "type": trade_type,
+                "price": mainnet_price,
+                "amount": amount,
+                "profit": profit,
+                "tx_hash": tx_hash,
+                "execution_network": TESTNET_NAME,
+                "pricing_source": "mainnet",
+            }
+            if usdc_received is not None:
+                payload["usdc_received"] = usdc_received
+            requests.post(
                 f"{API_SERVER}/api/trade",
-                json={
-                    "type": trade_type,
-                    "price": price,
-                    "amount": amount,
-                    "profit": profit
-                },
+                json=payload,
                 timeout=5
             )
-            if response.status_code == 200:
-                print(f"✅ Trade recorded: {trade_type}")
-                return True
         except Exception:
             pass
-        return False
 
-    def sync_wallet_data(self, block_number=None):
+    def sync_wallet_data(self, block_number=None, mainnet_price=None):
         try:
-            eth_bal = float(self.w3.from_wei(
-                self.w3.eth.get_balance(self.account.address), 'ether'))
-            weth_bal = self.get_balance(WETH)
-            usdc_bal = self.get_balance(USDC)
+            eth_bal = float(self.w3_testnet.from_wei(
+                self.w3_testnet.eth.get_balance(self.account.address),
+                'ether'))
+            weth_bal = self.get_balance(TESTNET_WETH)
+            usdc_bal = self.get_balance(TESTNET_USDC)
 
             wallet_data = {
                 "eth": round(eth_bal, 6),
                 "weth": round(weth_bal, 6),
                 "usdc": round(usdc_bal, 6),
                 "wallet": self.account.address,
-                "network": "Sepolia",
+                "execution_network": TESTNET_NAME,
+                "pricing_source": "Mainnet",
+                "mainnet_price": (
+                    round(mainnet_price, 2) if mainnet_price else None),
+                "total_pnl": round(self.total_pnl, 4),
                 "block": block_number,
                 "updated": datetime.now().isoformat()
             }
@@ -316,53 +355,82 @@ class UniswapLiveTrader:
                 json.dump(wallet_data, f, indent=2)
             return eth_bal, weth_bal, usdc_bal
         except Exception as e:
-            print(f"⚠️  Wallet sync error: {e}")
+            print(f"  Wallet sync error: {e}")
             return None, None, None
 
+    # -- Main loop ----------------------------------------------------------
+
     async def run(self):
+        mainnet_price = self.get_mainnet_price(1.0)
+        eth_bal, weth_bal, usdc_bal = self.sync_wallet_data(
+            mainnet_price=mainnet_price)
+
         print(f"""
-╔═══════════════════════════════════════════════════════════╗
-║   🚀 LIVE TRADER - SEPOLIA EXECUTION & PRICING           ║
-║       Using the EXACT POOL we trade on for prices         ║
-╚═══════════════════════════════════════════════════════════╝
-
-⚙️  Configuration:
-   Position Size: {POSITION_SIZE} WETH
-   Fee Tier: {FEE_TIER/10000:.2f}%
-   Network: Sepolia
-   Pricing: Sepolia (Same Pool)
-   Wallet: {self.account.address}
-
-📊 Dashboard: http://localhost:3000/dashboard.html
+========================================================
+  LIVE TRADER | Mainnet Pricing + {TESTNET_NAME} Execution
+========================================================
+  Position Size : {POSITION_SIZE} WETH
+  Take Profit   : {(TAKE_PROFIT - 1) * 100:.1f}%
+  Stop Loss     : {(1 - STOP_LOSS) * 100:.1f}%
+  Pricing Pool  : Mainnet WETH/USDC ({MAINNET_FEE_TIER / 10000:.2f}%)
+  Execution Pool: {TESTNET_NAME} WETH/USDC ({TESTNET_FEE_TIER / 10000:.2f}%)
+  Wallet        : {self.account.address}
+--------------------------------------------------------
+  ETH  : {eth_bal:.6f}
+  WETH : {weth_bal:.6f}
+  USDC : {usdc_bal:.6f}
+  Price: ${mainnet_price:.2f} (Mainnet)
+--------------------------------------------------------
+  API Server : {API_SERVER}
+========================================================
 """)
 
-        eth_bal, weth_bal, usdc_bal = self.sync_wallet_data()
-        current_price = self.get_price(1.0)
-
-        print(f"💰 Starting Balances:")
-        print(f"   ETH:  {eth_bal:.6f}")
-        print(f"   WETH: {weth_bal:.6f}")
-        print(f"   USDC: {usdc_bal:.6f}")
-        if current_price:
-            print(f"   Price: ${current_price:.2f}")
-        
         if weth_bal < POSITION_SIZE:
-            print(f"⚠️  Insufficient WETH to trade")
+            print(
+                f"Insufficient WETH "
+                f"({weth_bal:.6f} < {POSITION_SIZE})")
             return
 
-        print("✅ Starting loop...")
-        
-        start_time = time.time()
-        trade_count = 0
-        buy_price = None
-        in_position = False
-        last_block = self.w3.eth.block_number
-        blocks_since_signal = 0
-        signal_interval = 20
-
+        # Restore open positions from trade history
+        open_positions = []
         try:
-            while True:
-                current_block = self.w3.eth.block_number
+            with open("/tmp/bot_trades.json") as f:
+                trades = json.load(f)
+            buys = [t for t in trades if t['type'] == 'BUY']
+            sells = [t for t in trades if t['type'] == 'SELL']
+            unmatched = len(buys) - len(sells)
+            if unmatched > 0:
+                for b in buys[-unmatched:]:
+                    open_positions.append({
+                        "entry_price": b["price"],
+                        "amount": b["amount"],
+                        "usdc_held": b.get("usdc_received",
+                                           b["amount"] * b["price"])
+                    })
+                print(f"  Restored {len(open_positions)} open positions:")
+                for p in open_positions:
+                    print(f"    entry ${p['entry_price']:.2f} "
+                          f"x {p['amount']} WETH "
+                          f"({p['usdc_held']:.2f} USDC)")
+                self.total_pnl = sum(
+                    t.get('profit', 0) for t in trades)
+        except Exception:
+            pass
+
+        last_block = self.w3_testnet.eth.block_number
+        blocks_since_signal = 0
+        signal_interval = 5  # check every ~10s for active testing
+
+        print("Starting trading loop...")
+
+        error_count = 0
+        max_backoff = 60
+
+        while True:
+            try:
+                current_block = self.w3_testnet.eth.block_number
+                error_count = 0  # reset on success
+
                 if current_block <= last_block:
                     await asyncio.sleep(2)
                     continue
@@ -370,51 +438,111 @@ class UniswapLiveTrader:
                 new_blocks = current_block - last_block
                 last_block = current_block
                 blocks_since_signal += new_blocks
-                elapsed = (time.time() - start_time) / 3600
 
-                _, weth_bal, usdc_bal = self.sync_wallet_data(current_block)
-                current_price = self.get_price(1.0)
+                mainnet_price = self.get_mainnet_price(1.0)
+                if mainnet_price is None:
+                    await asyncio.sleep(2)
+                    continue
+
+                _, weth_bal, usdc_bal = self.sync_wallet_data(
+                    current_block, mainnet_price)
 
                 if current_block % 10 == 0:
-                     print(f"[{datetime.now().strftime('%H:%M:%S')}] Block {current_block} | Price: ${current_price:.2f} | WETH: {weth_bal:.6f}")
+                    n = len(open_positions)
+                    status = f"{n} POS" if n > 0 else "IDLE"
+                    print(
+                        f"[{datetime.now().strftime('%H:%M:%S')}] "
+                        f"Block {current_block} | "
+                        f"${mainnet_price:.2f} (Mainnet) | "
+                        f"WETH: {weth_bal:.4f} | "
+                        f"USDC: {usdc_bal:.2f} | "
+                        f"PnL: ${self.total_pnl:.4f} | "
+                        f"{status}")
 
-                if blocks_since_signal >= signal_interval and current_price is not None:
+                # Check exits — each position independently
+                closed = []
+                for i, pos in enumerate(open_positions):
+                    change = mainnet_price / pos["entry_price"]
+                    if change >= TAKE_PROFIT or change <= STOP_LOSS:
+                        pnl = ((mainnet_price - pos["entry_price"])
+                               * pos["amount"])
+                        tag = ("TAKE PROFIT" if change >= TAKE_PROFIT
+                               else "STOP LOSS")
+                        print(
+                            f"  {tag} #{i + 1} at ${mainnet_price:.2f} "
+                            f"(entry ${pos['entry_price']:.2f}, "
+                            f"usdc {pos['usdc_held']:.2f}, "
+                            f"pnl ${pnl:.4f})")
+
+                        # Swap only THIS position's USDC
+                        tx = None
+                        swap_amount = pos["usdc_held"]
+                        avail = self.get_balance(TESTNET_USDC)
+                        if swap_amount > avail:
+                            swap_amount = avail
+                        if swap_amount > 0.01:
+                            tx = self.swap_usdc_to_weth(swap_amount)
+
+                        self.total_pnl += pnl
+                        self.trade_count += 1
+                        self.record_trade(
+                            "SELL", mainnet_price,
+                            pos["amount"], pnl, tx)
+                        closed.append(i)
+                        # Re-read balance after swap
+                        if tx:
+                            weth_bal = self.get_balance(TESTNET_WETH)
+
+                for i in reversed(closed):
+                    open_positions.pop(i)
+
+                # Check entry on signal interval
+                if blocks_since_signal >= signal_interval:
                     blocks_since_signal = 0
-                    
-                    if not in_position:
-                        print(f"🟢 BUY SIGNAL at ${current_price:.2f}")
-                        if self.swap_weth_to_usdc(POSITION_SIZE):
-                            in_position = True
-                            buy_price = current_price
-                            trade_count += 1
-                            self.record_trade("BUY", buy_price, POSITION_SIZE, 0)
-                    
-                    elif in_position:
-                        change = current_price / buy_price
-                        if change >= TAKE_PROFIT:
-                            profit = (current_price - buy_price) * POSITION_SIZE
-                            print(f"💰 TAKE PROFIT at ${current_price:.2f}")
-                            self.record_trade("SELL", current_price, POSITION_SIZE, profit)
-                            in_position = False
-                            trade_count += 1
-                        elif change <= STOP_LOSS:
-                            loss = (current_price - buy_price) * POSITION_SIZE
-                            print(f"🛑 STOP LOSS at ${current_price:.2f}")
-                            self.record_trade("SELL", current_price, POSITION_SIZE, loss)
-                            in_position = False
-                            trade_count += 1
+
+                    if weth_bal >= POSITION_SIZE:
+                        # Get USDC balance before swap
+                        usdc_before = self.get_balance(TESTNET_USDC)
+                        print(
+                            f"  ENTER at Mainnet price "
+                            f"${mainnet_price:.2f}")
+                        tx = self.swap_weth_to_usdc(POSITION_SIZE)
+                        if tx:
+                            usdc_after = self.get_balance(TESTNET_USDC)
+                            usdc_received = usdc_after - usdc_before
+                            open_positions.append({
+                                "entry_price": mainnet_price,
+                                "amount": POSITION_SIZE,
+                                "usdc_held": usdc_received
+                            })
+                            self.trade_count += 1
+                            self.record_trade(
+                                "BUY", mainnet_price,
+                                POSITION_SIZE, 0, tx,
+                                usdc_received=usdc_received)
 
                 await asyncio.sleep(1)
 
-        except KeyboardInterrupt:
-            self.print_summary(trade_count)
+            except KeyboardInterrupt:
+                print(
+                    f"\nStopped. Trades: {self.trade_count} | "
+                    f"Total PnL: ${self.total_pnl:.4f}")
+                break
 
-    def print_summary(self, count):
-        print(f"\nStopped. Total Trades: {count}")
+            except Exception as e:
+                error_count += 1
+                backoff = min(2 ** error_count, max_backoff)
+                print(
+                    f"  [{datetime.now().strftime('%H:%M:%S')}] "
+                    f"Error (retry {error_count}, wait {backoff}s): "
+                    f"{type(e).__name__}: {e}")
+                await asyncio.sleep(backoff)
+
 
 async def main():
     trader = UniswapLiveTrader()
     await trader.run()
+
 
 if __name__ == "__main__":
     try:

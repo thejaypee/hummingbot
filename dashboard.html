@@ -239,7 +239,7 @@
         <header>
             <div>
                 <h1>🤖 Hummingbot Dashboard</h1>
-                <p style="color: #94a3b8; font-size: 13px; margin-top: 4px;">ERC20 Trading Strategy Monitor</p>
+                <p style="color: #94a3b8; font-size: 13px; margin-top: 4px;">Mainnet Pricing + Base Sepolia Execution</p>
             </div>
             <div class="status">
                 <div class="status-item">
@@ -319,6 +319,8 @@
                         <tr>
                             <th>Entry Price</th>
                             <th>Current Price</th>
+                            <th>Take Profit</th>
+                            <th>Stop Loss</th>
                             <th>Quantity</th>
                             <th>Unrealized P&L</th>
                             <th>Status</th>
@@ -388,9 +390,12 @@
             document.getElementById('wallet-eth').textContent = (wallet.eth || 0).toFixed(6);
             document.getElementById('wallet-weth').textContent = (wallet.weth || 0).toFixed(6);
             document.getElementById('wallet-usdc').textContent = (wallet.usdc || 0).toFixed(6);
-            const net = wallet.network || 'Sepolia';
+            const execNet = wallet.execution_network || 'Base Sepolia';
+            const priceNet = wallet.pricing_source || 'Mainnet';
             const blk = wallet.block ? ` #${wallet.block}` : '';
-            document.getElementById('wallet-network').textContent = net + blk;
+            const mainPrice = wallet.mainnet_price ? ` | $${wallet.mainnet_price}` : '';
+            document.getElementById('wallet-network').textContent = execNet + blk;
+            document.getElementById('wallet-network').innerHTML = execNet + blk + '<br><span style="font-size:12px;color:#94a3b8;">Pricing: ' + priceNet + mainPrice + '</span>';
             if (wallet.updated) {
                 const t = new Date(wallet.updated).toLocaleTimeString('en-US');
                 document.getElementById('wallet-updated').textContent = 'Updated: ' + t;
@@ -407,20 +412,37 @@
             if (pnlHistory.length > 60) pnlHistory = pnlHistory.slice(-60);
             drawChart();
 
-            // Active positions table
+            // Active positions table — only show unmatched BUYs (truly open)
             let positionsHTML = '';
-            const openBuys = tradeList.filter(t => t.type === 'BUY');
+            const buys = tradeList.filter(t => t.type === 'BUY');
+            const sells = tradeList.filter(t => t.type === 'SELL');
+            // Unmatched buys = most recent N buys where N = buys - sells
+            const openCount = Math.max(0, buys.length - sells.length);
+            const openBuys = buys.slice(-openCount); // take the latest unmatched
+            const currentPrice = wallet.mainnet_price || 0;
+            const TP_MULT = 1.001;  // 0.1% take profit
+            const SL_MULT = 0.999;  // 0.1% stop loss
             if (openBuys.length === 0) {
-                positionsHTML = '<tr><td colspan="5" style="text-align:center;color:#94a3b8;padding:20px;">No active positions</td></tr>';
+                positionsHTML = '<tr><td colspan="7" style="text-align:center;color:#94a3b8;padding:20px;">No active positions</td></tr>';
             } else {
-                openBuys.slice(0, 10).forEach(trade => {
-                    const profitClass = (trade.profit || 0) >= 0 ? 'positive' : 'negative';
+                openBuys.forEach(trade => {
+                    const entry = trade.price || 0;
+                    const tp = entry * TP_MULT;
+                    const sl = entry * SL_MULT;
+                    const unrealized = currentPrice > 0 ? ((currentPrice - entry) / entry * 100) : 0;
+                    const unrealizedUsd = (currentPrice - entry) * (trade.amount || 0);
+                    const profitClass = unrealizedUsd >= 0 ? 'positive' : 'negative';
+                    // How close to TP or SL
+                    const tpDist = ((tp - currentPrice) / currentPrice * 100).toFixed(1);
+                    const slDist = ((currentPrice - sl) / currentPrice * 100).toFixed(1);
                     positionsHTML += `
                         <tr>
-                            <td>$${(trade.price || 0).toFixed(2)}</td>
-                            <td>$${(trade.price || 0).toFixed(2)}</td>
+                            <td>$${entry.toFixed(2)}</td>
+                            <td>$${currentPrice.toFixed(2)}</td>
+                            <td><span class="positive">$${tp.toFixed(2)}</span> <span style="font-size:10px;color:#64748b;">(${tpDist}% away)</span></td>
+                            <td><span class="negative">$${sl.toFixed(2)}</span> <span style="font-size:10px;color:#64748b;">(${slDist}% away)</span></td>
                             <td>${(trade.amount || 0).toFixed(4)} WETH</td>
-                            <td><span class="${profitClass}">$${(trade.profit || 0).toFixed(2)}</span></td>
+                            <td><span class="${profitClass}">$${unrealizedUsd.toFixed(4)} (${unrealized >= 0 ? '+' : ''}${unrealized.toFixed(2)}%)</span></td>
                             <td><span class="order-badge order-buy">OPEN</span></td>
                         </tr>
                     `;
@@ -428,20 +450,19 @@
             }
             document.getElementById('positions-table').innerHTML = positionsHTML;
 
-            // Recent trades (order list)
+            // Recent trades — only completed round-trips (SELL trades with realized P&L)
             let recentTradesHTML = '';
-            if (tradeList.length === 0) {
-                recentTradesHTML = '<tr><td colspan="5" style="text-align:center;color:#94a3b8;padding:20px;">No trades yet. Waiting for signals...</td></tr>';
+            const completedSells = tradeList.filter(t => t.type === 'SELL');
+            if (completedSells.length === 0) {
+                recentTradesHTML = '<tr><td colspan="5" style="text-align:center;color:#94a3b8;padding:20px;">No completed trades yet</td></tr>';
             } else {
-                tradeList.slice(-20).reverse().forEach(trade => {
+                completedSells.slice(-20).reverse().forEach(trade => {
                     const time = new Date(trade.timestamp).toLocaleTimeString('en-US');
-                    const isBuy = trade.type === 'BUY';
-                    const badgeClass = isBuy ? 'order-buy' : 'order-sell';
                     const profitClass = (trade.profit || 0) >= 0 ? 'positive' : 'negative';
                     recentTradesHTML += `
                         <tr>
                             <td>${time}</td>
-                            <td><span class="order-badge ${badgeClass}">${trade.type}</span></td>
+                            <td><span class="order-badge order-sell">SELL</span></td>
                             <td>$${(trade.price || 0).toFixed(2)}</td>
                             <td>${(trade.amount || 0).toFixed(4)} WETH</td>
                             <td><span class="${profitClass}">$${(trade.profit || 0).toFixed(2)}</span></td>
@@ -526,24 +547,19 @@
             document.getElementById('error-container').innerHTML = '';
         }
 
-        // Refresh every 12 seconds (Sepolia block time)
-        let lastBlock = null;
-        async function blockAwareRefresh() {
+        // Refresh every 2 seconds (Base Sepolia has fast blocks)
+        async function autoRefresh() {
             try {
+                clearError();
                 const response = await fetch(REAL_API);
                 const data = await response.json();
-                const newBlock = data.wallet && data.wallet.block;
-                // Only update UI when new block data arrives
-                if (newBlock !== lastBlock) {
-                    lastBlock = newBlock;
-                    updateDashboardWithRealData(data);
-                }
+                updateDashboardWithRealData(data);
             } catch (e) {
                 showError(`Cannot connect to Backend API: ${e.message}`);
             }
         }
-        blockAwareRefresh();
-        setInterval(blockAwareRefresh, 12000);
+        autoRefresh();
+        setInterval(autoRefresh, 2000);
     </script>
 </body>
 </html>

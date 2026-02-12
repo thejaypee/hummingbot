@@ -4,13 +4,14 @@ Simple API server that serves REAL bot data to the dashboard
 Reads from bot activity log and serves as REST API
 """
 
+import json
+import os
+from datetime import datetime
+from pathlib import Path
+
+from dotenv import load_dotenv
 from flask import Flask, jsonify, request
 from flask_cors import CORS
-import json
-from pathlib import Path
-from datetime import datetime
-import os
-from dotenv import load_dotenv
 
 load_dotenv(Path("/home/sauly/hummingbot/.env.local"))
 
@@ -28,12 +29,14 @@ if not TRADES_FILE.exists():
 if not WALLET_FILE.exists():
     with open(WALLET_FILE, "w") as f:
         json.dump({
-            "eth": 0.563889,
-            "usdc": 20.0,
-            "weth": 0.2,
+            "eth": 0,
+            "usdc": 0,
+            "weth": 0,
             "wallet": os.getenv("ETHEREUM_WALLET_ADDRESS"),
-            "network": "Sepolia"
+            "execution_network": "Base Sepolia",
+            "pricing_source": "Mainnet"
         }, f)
+
 
 @app.route('/api/trades', methods=['GET'])
 def get_trades():
@@ -42,12 +45,14 @@ def get_trades():
         trades = json.load(f)
     return jsonify({"trades": trades})
 
+
 @app.route('/api/wallet', methods=['GET'])
 def get_wallet():
     """Get wallet balance info"""
     with open(WALLET_FILE) as f:
         wallet = json.load(f)
     return jsonify(wallet)
+
 
 @app.route('/api/dashboard', methods=['GET'])
 def get_dashboard():
@@ -79,6 +84,7 @@ def get_dashboard():
         "trades": executed[:50]  # Last 50 trades
     })
 
+
 @app.route('/api/trade', methods=['POST'])
 def record_trade():
     """Record a new trade (called by bot)"""
@@ -95,6 +101,8 @@ def record_trade():
         "profit": data.get("profit", 0),
         "status": "EXECUTED"
     }
+    if data.get("usdc_received") is not None:
+        trade["usdc_received"] = data["usdc_received"]
 
     trades.append(trade)
 
@@ -103,10 +111,12 @@ def record_trade():
 
     return jsonify({"success": True, "trade": trade})
 
+
 @app.route('/health', methods=['GET'])
 def health():
     """Health check"""
     return jsonify({"status": "ok", "server": "bot-api"})
+
 
 if __name__ == '__main__':
     print("""

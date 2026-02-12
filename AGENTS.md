@@ -326,26 +326,43 @@ CONDA_ENV=hummingbot
 
 ## Live Trading Simulations
 
-### Mainnet Pricing with Testnet Execution
-For realistic testing without capital risk, developers can configure bots to use **Mainnet Pricing** while executing trades on **Sepolia Testnet**.
+### Dual-Chain Architecture: Mainnet Pricing + Base Sepolia Execution
+Simulated live trading uses two chains in parallel to achieve realistic performance tracking without capital risk.
 
-**Requirements:**
-1.  **Mainnet RPC**: A valid Mainnet RPC URL in `.env.local` (`MAINNET_RPC_URL`).
-2.  **Sepolia RPC**: A valid Sepolia RPC URL in `.env.local` (`ALCHEMY_RPC_URL` or similar).
+**Architecture (`uniswap_live_trader.py`):**
+- **Pricing Layer (Mainnet)**: `w3_mainnet` connects to Ethereum Mainnet via `MAINNET_RPC_URL`. Prices are fetched from the Uniswap V3 QuoterV2 (`0x61fFE014bA17989E743c5F6cB21bF9697530B21e`) on the WETH/USDC 0.05% pool (deepest liquidity). Chain ID validated as `1` on startup.
+- **Execution Layer (Base Sepolia)**: `w3_testnet` connects to Base Sepolia via `TESTNET_RPC_URL`. Swaps execute on SwapRouter02 (`0x94cC0AaC535CCDB3C01d6787D6413C739ae12bc4`) using the WETH/USDC 0.30% pool (deepest Base Sepolia liquidity). Chain ID validated as `84532` on startup.
+- **PnL Tracking**: All profit/loss calculations use Mainnet prices, not testnet prices. Entry and exit prices are recorded from the Mainnet quoter at the moment of each testnet swap.
+- **Bidirectional Swaps**: Both WETH->USDC (entry) and USDC->WETH (exit) execute as real on-chain Base Sepolia transactions.
 
-**Implementation Pattern:**
--   **Pricing**: Fetch real-time prices (e.g., from Uniswap V3 Quoter on Mainnet).
--   **Execution**: Execute swaps on the Testnet (Sepolia) when Mainnet signals trigger.
--   **Dashboard**: Report profits/losses based on the Mainnet price movements to simulate real-world performance.
+**Why Base Sepolia over Ethereum Sepolia:**
+Ethereum Sepolia has near-zero Uniswap V3 liquidity — pools drain from a single small trade. Base Sepolia has deep liquidity (1000x more) in the WETH/USDC 0.30% pool, supporting trades up to 1 WETH without SPL errors.
 
-**Example Configuration (`.env.local`):**
+**Why pricing and execution are on different chains:**
+The Mainnet 0.05% pool reflects real market depth and pricing. Testnet pools have artificial liquidity with arbitrary prices. Using Mainnet prices for signals and PnL ensures the simulation tracks real-world performance, while testnet execution proves the swap logic works end-to-end without risking funds.
+
+**SwapRouter02 differences from V1 SwapRouter:**
+- No `deadline` field in the `exactInputSingle` struct params
+- Gas limit must be 600k+ (testnet pools require more gas than mainnet)
+- Approval must target SwapRouter02 address specifically
+
+**Requirements (`.env.local`):**
 ```bash
-# Execution Layer (Sepolia)
-ALCHEMY_RPC_URL=https://eth-sepolia.g.alchemy.com/v2/YOUR_KEY
-
-# Pricing Layer (Mainnet)
-MAINNET_RPC_URL=https://eth-mainnet.g.alchemy.com/v2/YOUR_KEY
+TESTNET_RPC_URL=https://base-sepolia.g.alchemy.com/v2/YOUR_KEY  # Execution
+MAINNET_RPC_URL=https://eth-mainnet.g.alchemy.com/v2/YOUR_KEY   # Pricing
+ETHEREUM_PRIVATE_KEY=<testnet-key>
+ETHEREUM_WALLET_ADDRESS=<your-wallet>
 ```
+
+**Base Sepolia token addresses:**
+- WETH: `0x4200000000000000000000000000000000000006`
+- USDC: `0x036CbD53842c5426634e7929541eC2318f3dCF7e`
+
+**Key files:**
+- `uniswap_live_trader.py` - Dual-chain trader with Mainnet pricing + Base Sepolia execution
+- `bot_api_server.py` - REST API serving real wallet/trade data to dashboard (port 4000)
+- `dashboard.html` - Web dashboard consuming API data (auto-refresh every 2s)
+- `test_real_swap.py` - Quick test script to verify swap mechanics
 
 ## Special Considerations
 
