@@ -1,0 +1,6 @@
+version: "3.9"
+services:
+  hummingbot:
+    environment:
+      CONFIG_PASSWORD: admin
+      HUMMINGBOT_SKIP_STATUS_COMMAND: "true"

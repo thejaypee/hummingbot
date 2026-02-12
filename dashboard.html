@@ -1,0 +1,549 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Hummingbot Dashboard</title>
+    <style>
+        * {
+            margin: 0;
+            padding: 0;
+            box-sizing: border-box;
+        }
+        body {
+            font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, Oxygen, Ubuntu, Cantarell, sans-serif;
+            background: linear-gradient(135deg, #0f172a 0%, #1e293b 100%);
+            color: #e2e8f0;
+            min-height: 100vh;
+            padding: 20px;
+        }
+        .container {
+            max-width: 1400px;
+            margin: 0 auto;
+        }
+        header {
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+            margin-bottom: 30px;
+            padding-bottom: 20px;
+            border-bottom: 1px solid #334155;
+        }
+        h1 {
+            font-size: 28px;
+            font-weight: 600;
+        }
+        .status {
+            display: flex;
+            gap: 15px;
+            align-items: center;
+        }
+        .status-item {
+            display: flex;
+            align-items: center;
+            gap: 8px;
+            padding: 8px 16px;
+            background: #1e293b;
+            border-radius: 6px;
+            border: 1px solid #334155;
+        }
+        .status-dot {
+            width: 10px;
+            height: 10px;
+            border-radius: 50%;
+            background: #22c55e;
+            animation: pulse 2s infinite;
+        }
+        @keyframes pulse {
+            0%, 100% { opacity: 1; }
+            50% { opacity: 0.5; }
+        }
+        .grid {
+            display: grid;
+            grid-template-columns: repeat(auto-fit, minmax(300px, 1fr));
+            gap: 20px;
+            margin-bottom: 20px;
+        }
+        .card {
+            background: #1e293b;
+            border: 1px solid #334155;
+            border-radius: 8px;
+            padding: 20px;
+            transition: all 0.3s ease;
+        }
+        .card:hover {
+            border-color: #475569;
+            box-shadow: 0 4px 12px rgba(0, 0, 0, 0.2);
+        }
+        .card h2 {
+            font-size: 14px;
+            text-transform: uppercase;
+            color: #94a3b8;
+            margin-bottom: 12px;
+            letter-spacing: 0.5px;
+        }
+        .card-value {
+            font-size: 32px;
+            font-weight: 600;
+            margin-bottom: 8px;
+        }
+        .card-subtext {
+            font-size: 12px;
+            color: #64748b;
+        }
+        .positive {
+            color: #22c55e;
+        }
+        .negative {
+            color: #ef4444;
+        }
+        .neutral {
+            color: #f59e0b;
+        }
+        .loading {
+            display: inline-block;
+            width: 20px;
+            height: 20px;
+            border: 3px solid #334155;
+            border-radius: 50%;
+            border-top-color: #22c55e;
+            animation: spin 1s linear infinite;
+        }
+        @keyframes spin {
+            to { transform: rotate(360deg); }
+        }
+        .table-container {
+            background: #1e293b;
+            border: 1px solid #334155;
+            border-radius: 8px;
+            overflow: hidden;
+        }
+        table {
+            width: 100%;
+            border-collapse: collapse;
+        }
+        th {
+            background: #0f172a;
+            padding: 12px 16px;
+            text-align: left;
+            font-size: 12px;
+            text-transform: uppercase;
+            color: #94a3b8;
+            letter-spacing: 0.5px;
+            border-bottom: 1px solid #334155;
+        }
+        td {
+            padding: 12px 16px;
+            border-bottom: 1px solid #334155;
+            font-size: 13px;
+        }
+        tr:last-child td {
+            border-bottom: none;
+        }
+        tr:hover {
+            background: #334155;
+        }
+        .refresh-btn {
+            padding: 8px 16px;
+            background: #3b82f6;
+            border: none;
+            border-radius: 6px;
+            color: white;
+            cursor: pointer;
+            font-size: 13px;
+            transition: all 0.3s ease;
+        }
+        .refresh-btn:hover {
+            background: #2563eb;
+        }
+        .error {
+            background: #7f1d1d;
+            border: 1px solid #991b1b;
+            color: #fca5a5;
+            padding: 16px;
+            border-radius: 6px;
+            margin-bottom: 20px;
+        }
+        .row {
+            display: grid;
+            grid-template-columns: repeat(auto-fit, minmax(280px, 1fr));
+            gap: 20px;
+        }
+        .wallet-bar {
+            display: flex;
+            gap: 20px;
+            margin-bottom: 20px;
+            flex-wrap: wrap;
+        }
+        .wallet-item {
+            background: #1e293b;
+            border: 1px solid #334155;
+            border-radius: 8px;
+            padding: 16px 24px;
+            flex: 1;
+            min-width: 180px;
+        }
+        .wallet-item h3 {
+            font-size: 12px;
+            text-transform: uppercase;
+            color: #94a3b8;
+            margin-bottom: 6px;
+        }
+        .wallet-item .val {
+            font-size: 24px;
+            font-weight: 600;
+        }
+        .wallet-item .sub {
+            font-size: 11px;
+            color: #64748b;
+            margin-top: 4px;
+        }
+        .chart-container {
+            background: #1e293b;
+            border: 1px solid #334155;
+            border-radius: 8px;
+            padding: 20px;
+            margin-bottom: 20px;
+            position: relative;
+            height: 260px;
+        }
+        .chart-container h2 {
+            font-size: 14px;
+            text-transform: uppercase;
+            color: #94a3b8;
+            margin-bottom: 12px;
+        }
+        .chart-canvas {
+            width: 100%;
+            height: 200px;
+        }
+        .order-badge {
+            display: inline-block;
+            padding: 2px 8px;
+            border-radius: 4px;
+            font-size: 11px;
+            font-weight: 600;
+        }
+        .order-buy { background: #064e3b; color: #34d399; }
+        .order-sell { background: #7f1d1d; color: #fca5a5; }
+        .updated-text {
+            font-size: 11px;
+            color: #475569;
+            text-align: right;
+            margin-top: 4px;
+        }
+    </style>
+</head>
+<body>
+    <div class="container">
+        <header>
+            <div>
+                <h1>🤖 Hummingbot Dashboard</h1>
+                <p style="color: #94a3b8; font-size: 13px; margin-top: 4px;">ERC20 Trading Strategy Monitor</p>
+            </div>
+            <div class="status">
+                <div class="status-item">
+                    <div class="status-dot"></div>
+                    <span>Backend API</span>
+                </div>
+                <button class="refresh-btn" onclick="refreshData()">Refresh</button>
+            </div>
+        </header>
+
+        <div id="error-container"></div>
+
+        <div class="wallet-bar" id="wallet-bar">
+            <div class="wallet-item">
+                <h3>ETH Balance</h3>
+                <div class="val" id="wallet-eth"><span class="loading"></span></div>
+                <div class="sub">Native gas token</div>
+            </div>
+            <div class="wallet-item">
+                <h3>WETH Balance</h3>
+                <div class="val" id="wallet-weth"><span class="loading"></span></div>
+                <div class="sub">Wrapped ETH (trading)</div>
+            </div>
+            <div class="wallet-item">
+                <h3>USDC Balance</h3>
+                <div class="val" id="wallet-usdc"><span class="loading"></span></div>
+                <div class="sub">Stablecoin</div>
+            </div>
+            <div class="wallet-item">
+                <h3>Network</h3>
+                <div class="val" id="wallet-network" style="font-size:18px;"><span class="loading"></span></div>
+                <div class="sub updated-text" id="wallet-updated"></div>
+            </div>
+        </div>
+
+        <div class="chart-container">
+            <h2>P&L Over Time</h2>
+            <canvas id="pnl-chart" class="chart-canvas"></canvas>
+        </div>
+
+        <div class="row">
+            <div class="card">
+                <h2>Today's P&L</h2>
+                <div class="card-value positive" id="pnl">
+                    <span class="loading"></span>
+                </div>
+                <div class="card-subtext">Based on executed trades</div>
+            </div>
+            <div class="card">
+                <h2>Win Rate</h2>
+                <div class="card-value positive" id="winrate">
+                    <span class="loading"></span>
+                </div>
+                <div class="card-subtext">Winning trades / Total</div>
+            </div>
+            <div class="card">
+                <h2>Active Positions</h2>
+                <div class="card-value neutral" id="positions">
+                    <span class="loading"></span>
+                </div>
+                <div class="card-subtext">Currently open</div>
+            </div>
+            <div class="card">
+                <h2>Total Trades</h2>
+                <div class="card-value" id="risk">
+                    <span class="loading"></span>
+                </div>
+                <div class="card-subtext">Executed on-chain</div>
+            </div>
+        </div>
+
+        <div style="margin-top: 30px;">
+            <h2 style="margin-bottom: 16px; font-size: 16px;">Active Positions</h2>
+            <div class="table-container">
+                <table>
+                    <thead>
+                        <tr>
+                            <th>Entry Price</th>
+                            <th>Current Price</th>
+                            <th>Quantity</th>
+                            <th>Unrealized P&L</th>
+                            <th>Status</th>
+                        </tr>
+                    </thead>
+                    <tbody id="positions-table">
+                        <tr>
+                            <td colspan="5" style="text-align: center; padding: 40px;">
+                                <span class="loading" style="margin: 0 auto;"></span>
+                            </td>
+                        </tr>
+                    </tbody>
+                </table>
+            </div>
+        </div>
+
+        <div style="margin-top: 30px;">
+            <h2 style="margin-bottom: 16px; font-size: 16px;">Recent Trades</h2>
+            <div class="table-container">
+                <table>
+                    <thead>
+                        <tr>
+                            <th>Time</th>
+                            <th>Type</th>
+                            <th>Price</th>
+                            <th>Amount</th>
+                            <th>P&L</th>
+                        </tr>
+                    </thead>
+                    <tbody id="trades-table">
+                        <tr>
+                            <td colspan="5" style="text-align: center; padding: 40px;">
+                                <span class="loading" style="margin: 0 auto;"></span>
+                            </td>
+                        </tr>
+                    </tbody>
+                </table>
+            </div>
+        </div>
+    </div>
+
+    <script>
+        const REAL_API = 'http://localhost:4000/api/dashboard';
+        let pnlHistory = [];
+
+        async function refreshData() {
+            try {
+                clearError();
+                const response = await fetch(REAL_API);
+                const data = await response.json();
+                updateDashboardWithRealData(data);
+            } catch (error) {
+                showError(`Cannot connect to Backend API: ${error.message}`);
+            }
+        }
+
+        function updateDashboardWithRealData(data) {
+            const summary = data.summary || {};
+            const wallet = data.wallet || {};
+            const pnl = summary.total_pnl || 0;
+            const winRate = summary.win_rate || 0;
+            const tradeCount = summary.total_trades || 0;
+            const activePos = summary.active_positions || 0;
+            const tradeList = data.trades || [];
+
+            // Wallet balances
+            document.getElementById('wallet-eth').textContent = (wallet.eth || 0).toFixed(6);
+            document.getElementById('wallet-weth').textContent = (wallet.weth || 0).toFixed(6);
+            document.getElementById('wallet-usdc').textContent = (wallet.usdc || 0).toFixed(6);
+            const net = wallet.network || 'Sepolia';
+            const blk = wallet.block ? ` #${wallet.block}` : '';
+            document.getElementById('wallet-network').textContent = net + blk;
+            if (wallet.updated) {
+                const t = new Date(wallet.updated).toLocaleTimeString('en-US');
+                document.getElementById('wallet-updated').textContent = 'Updated: ' + t;
+            }
+
+            // Summary cards
+            document.getElementById('pnl').innerHTML = '<span class="' + (pnl >= 0 ? 'positive' : 'negative') + '">$' + pnl.toFixed(2) + '</span>';
+            document.getElementById('winrate').innerHTML = '<span class="positive">' + winRate.toFixed(1) + '%</span>';
+            document.getElementById('positions').innerHTML = activePos;
+            document.getElementById('risk').innerHTML = '<span class="neutral">' + tradeCount + '</span>';
+
+            // P&L chart
+            pnlHistory.push({ time: new Date(), pnl: pnl });
+            if (pnlHistory.length > 60) pnlHistory = pnlHistory.slice(-60);
+            drawChart();
+
+            // Active positions table
+            let positionsHTML = '';
+            const openBuys = tradeList.filter(t => t.type === 'BUY');
+            if (openBuys.length === 0) {
+                positionsHTML = '<tr><td colspan="5" style="text-align:center;color:#94a3b8;padding:20px;">No active positions</td></tr>';
+            } else {
+                openBuys.slice(0, 10).forEach(trade => {
+                    const profitClass = (trade.profit || 0) >= 0 ? 'positive' : 'negative';
+                    positionsHTML += `
+                        <tr>
+                            <td>$${(trade.price || 0).toFixed(2)}</td>
+                            <td>$${(trade.price || 0).toFixed(2)}</td>
+                            <td>${(trade.amount || 0).toFixed(4)} WETH</td>
+                            <td><span class="${profitClass}">$${(trade.profit || 0).toFixed(2)}</span></td>
+                            <td><span class="order-badge order-buy">OPEN</span></td>
+                        </tr>
+                    `;
+                });
+            }
+            document.getElementById('positions-table').innerHTML = positionsHTML;
+
+            // Recent trades (order list)
+            let recentTradesHTML = '';
+            if (tradeList.length === 0) {
+                recentTradesHTML = '<tr><td colspan="5" style="text-align:center;color:#94a3b8;padding:20px;">No trades yet. Waiting for signals...</td></tr>';
+            } else {
+                tradeList.slice(-20).reverse().forEach(trade => {
+                    const time = new Date(trade.timestamp).toLocaleTimeString('en-US');
+                    const isBuy = trade.type === 'BUY';
+                    const badgeClass = isBuy ? 'order-buy' : 'order-sell';
+                    const profitClass = (trade.profit || 0) >= 0 ? 'positive' : 'negative';
+                    recentTradesHTML += `
+                        <tr>
+                            <td>${time}</td>
+                            <td><span class="order-badge ${badgeClass}">${trade.type}</span></td>
+                            <td>$${(trade.price || 0).toFixed(2)}</td>
+                            <td>${(trade.amount || 0).toFixed(4)} WETH</td>
+                            <td><span class="${profitClass}">$${(trade.profit || 0).toFixed(2)}</span></td>
+                        </tr>
+                    `;
+                });
+            }
+            document.getElementById('trades-table').innerHTML = recentTradesHTML;
+        }
+
+        function drawChart() {
+            const canvas = document.getElementById('pnl-chart');
+            const ctx = canvas.getContext('2d');
+            const rect = canvas.parentElement.getBoundingClientRect();
+            canvas.width = rect.width - 40;
+            canvas.height = 200;
+
+            ctx.clearRect(0, 0, canvas.width, canvas.height);
+
+            if (pnlHistory.length < 2) {
+                ctx.fillStyle = '#475569';
+                ctx.font = '14px sans-serif';
+                ctx.textAlign = 'center';
+                ctx.fillText('Collecting data...', canvas.width / 2, canvas.height / 2);
+                return;
+            }
+
+            const values = pnlHistory.map(p => p.pnl);
+            const minV = Math.min(...values, 0);
+            const maxV = Math.max(...values, 1);
+            const range = maxV - minV || 1;
+            const pad = 30;
+            const w = canvas.width - pad * 2;
+            const h = canvas.height - pad * 2;
+
+            // Zero line
+            const zeroY = pad + h - ((0 - minV) / range) * h;
+            ctx.strokeStyle = '#334155';
+            ctx.lineWidth = 1;
+            ctx.setLineDash([4, 4]);
+            ctx.beginPath();
+            ctx.moveTo(pad, zeroY);
+            ctx.lineTo(pad + w, zeroY);
+            ctx.stroke();
+            ctx.setLineDash([]);
+
+            // P&L line
+            ctx.strokeStyle = values[values.length - 1] >= 0 ? '#22c55e' : '#ef4444';
+            ctx.lineWidth = 2;
+            ctx.beginPath();
+            for (let i = 0; i < values.length; i++) {
+                const x = pad + (i / (values.length - 1)) * w;
+                const y = pad + h - ((values[i] - minV) / range) * h;
+                if (i === 0) ctx.moveTo(x, y);
+                else ctx.lineTo(x, y);
+            }
+            ctx.stroke();
+
+            // Fill under line
+            const lastX = pad + w;
+            const lastY = pad + h - ((values[values.length - 1] - minV) / range) * h;
+            ctx.lineTo(lastX, zeroY);
+            ctx.lineTo(pad, zeroY);
+            ctx.closePath();
+            ctx.fillStyle = values[values.length - 1] >= 0 ? 'rgba(34,197,94,0.1)' : 'rgba(239,68,68,0.1)';
+            ctx.fill();
+
+            // Labels
+            ctx.fillStyle = '#94a3b8';
+            ctx.font = '11px sans-serif';
+            ctx.textAlign = 'right';
+            ctx.fillText('$' + maxV.toFixed(2), pad - 4, pad + 4);
+            ctx.fillText('$' + minV.toFixed(2), pad - 4, pad + h + 4);
+            ctx.fillText('$0', pad - 4, zeroY + 4);
+        }
+
+        function showError(message) {
+            document.getElementById('error-container').innerHTML = `<div class="error">${message}</div>`;
+        }
+
+        function clearError() {
+            document.getElementById('error-container').innerHTML = '';
+        }
+
+        // Refresh every 12 seconds (Sepolia block time)
+        let lastBlock = null;
+        async function blockAwareRefresh() {
+            try {
+                const response = await fetch(REAL_API);
+                const data = await response.json();
+                const newBlock = data.wallet && data.wallet.block;
+                // Only update UI when new block data arrives
+                if (newBlock !== lastBlock) {
+                    lastBlock = newBlock;
+                    updateDashboardWithRealData(data);
+                }
+            } catch (e) {
+                showError(`Cannot connect to Backend API: ${e.message}`);
+            }
+        }
+        blockAwareRefresh();
+        setInterval(blockAwareRefresh, 12000);
+    </script>
+</body>
+</html>

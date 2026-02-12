@@ -41,5 +41,5 @@ services:
      - "./gateway-files/logs:/home/gateway/logs"
      - "./certs:/home/gateway/certs"
    environment:
-     - GATEWAY_PASSPHRASE=admin
+     - GATEWAY_PASSPHRASE=15053500
      - DEV=true
