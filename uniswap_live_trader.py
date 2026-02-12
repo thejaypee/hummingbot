@@ -395,12 +395,6 @@ class UniswapLiveTrader:
 ========================================================
 """)
 
-        if weth_bal < POSITION_SIZE:
-            print(
-                f"Insufficient WETH "
-                f"({weth_bal:.6f} < {POSITION_SIZE})")
-            return
-
         # Restore open positions from trade history
         open_positions = []
         try:
