@@ -1,0 +1,3 @@
+[submodule "liquidity_scout_ui"]
+	path = liquidity_scout_ui
+	url = https://github.com/thejaypee/liquidityScout.git

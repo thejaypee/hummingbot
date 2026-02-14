@@ -122,88 +122,17 @@ conda run -n hummingbot python setup.py build_ext --inplace
 - Use type hints for function parameters and return values
 - Use modern Python typing features (from typing module)
 
-## Architecture Patterns
+### Error Handling
+- Use specific exception types rather than generic exceptions
+- Always include meaningful error messages
+- Log errors appropriately using the centralized logging system
+- Handle exceptions close to where they occur
 
-### Connector Architecture
-
-Connectors standardize REST/WebSocket APIs to different exchanges. Three main types:
-
-1. **Exchange Connectors** (`hummingbot/connector/exchange/`): Spot market trading
-   - Examples: Binance, Coinbase, KuCoin
-   - Base: `ExchangeBase` (Cython) and `ExchangePyBase` (Python)
-   - Key files: `client_order_tracker.py`, `in_flight_order_base.pyx`
-
-2. **Derivative Connectors** (`hummingbot/connector/derivative/`): Futures/perpetuals
-   - Examples: Binance Perpetual, Bybit Perpetual
-   - Base: `DerivativeBase`
-
-3. **Gateway Connectors** (`hummingbot/connector/gateway/`): DEX connectors via Gateway middleware
-   - Types: AMM routers (0x, Uniswap), AMM pools (Curve, SushiSwap), CLMM pools (Raydium)
-   - Communicates with TypeScript Gateway service
-
-**Key files shared across connectors:**
-- `connector_base.pyx`: Base connector class (Cython for performance)
-- `exchange_base.pyx`: Base for spot exchanges
-- `perpetual_derivative_py_base.py`: Base for perpetual derivatives
-- `budget_checker.py`: Validates orders against account limits
-- `markets_recorder.py`: Records trading activity
-
-### Strategy Architecture
-
-Two strategy generations coexist:
-
-1. **Strategy v1** (`hummingbot/strategy/`): Legacy, monolithic strategies
-   - Examples: `pure_market_making/`, `cross_exchange_market_making/`
-   - Each strategy has its own implementation
-   - Use for reference; new strategies should use v2
-
-2. **Strategy v2** (`hummingbot/strategy_v2/`): Modern, modular architecture
-   - **Controllers** (`strategy_v2/controllers/`): Define trading logic independently of exchanges
-   - **Executors** (`strategy_v2/executors/`): Execute controller signals on specific connectors
-   - **Backtesting** (`strategy_v2/backtesting/`): Simulation framework
-   - More maintainable and reusable across connectors
-
-### Core Infrastructure
-
-- **Events** (`core/event/`): Event-driven architecture (e.g., `BuyOrderCreatedEvent`, `SellOrderCompletedEvent`)
-- **API Throttler** (`core/api_throttler/`): Rate limiting for exchange APIs
-- **Data Types** (`core/data_type/`): Order, Trade, Market, Balance objects
-- **Rate Oracle** (`core/rate_oracle/`): Fetches exchange rates for price conversion
-- **Gateway** (`core/gateway/`): Communicates with the Gateway service
-- **C++ Components** (`core/cpp/`): High-performance data structures (compiled)
-
-### Client & UI
-
-- **Commands** (`client/command/`): CLI commands (create_market_order, cancel_order, etc.)
-- **UI** (`client/ui/`): Terminal UI using prompt_toolkit
-- **Config** (`client/config/`): Configuration management for strategies and exchanges
-
-## Important Development Notes
-
-### Cython Compilation
-- Performance-critical code is written in `.pyx` (Cython)
-- Base classes use Cython: `connector_base.pyx`, `exchange_base.pyx`, `in_flight_order_base.pyx`
-- C++ headers in `core/cpp/`
-- Compilation happens during `make install` via `setup.py build_ext`
-- Modify `.pyx` files → changes require reinstalling the environment or running `python setup.py build_ext --inplace`
-
-### Testing Requirements
-- **Minimum 80% unit test coverage** required for pull requests
-- UI components are excluded from coverage validation
-- Test structure mirrors `hummingbot/` in `test/hummingbot/`
-- pytest uses `asyncio_default_fixture_loop_scope = "function"` — each async test gets its own event loop
-- Use `coverage run` and `coverage html` for detailed reports
-- Ignored test paths in `make test`: `test/mock/`, `ndax/`, `dydx_v4_perpetual/`, `remote_iface/`, `oms_connector/`, `amm_arb/`, `cross_exchange_market_making/`
-
-### Data Models & ORM
-- Uses SQLAlchemy for database interactions (`hummingbot/model/`)
-- Database migrations in `model/`
-- OrderBook, Trade, and Balance models defined in data types
-
-### Logging
-- Centralized logging in `hummingbot/logger/`
-- Each module logs via logger mixin
-- Log configuration in `templates/` (logging templates for config)
+### Documentation
+- Document all public functions, classes, and modules with docstrings
+- Follow Google Python Style Guide for docstrings
+- Include type information in docstrings
+- Document complex logic with inline comments
 
 ## Git Workflow
 
@@ -233,139 +162,58 @@ Example: `(feat) add websocket support for Coinbase connector`
 7. Run `make development-diff-cover` locally to check coverage of your changes
 8. Allow edits by maintainers
 
-## Gateway (TypeScript)
+## Autonomous Multi-Token Trader
 
-Located in `gateway/` subdirectory. Key files:
-- `package.json`: Dependencies and scripts
-- `src/`: TypeScript source code for DEX connectors
-- Uses Node.js and Express for HTTP API
-- Has its own `CONTRIBUTING.md` and workflow
+DEX-only autonomous trader using Uniswap V4 (UniversalRouter + Permit2). No CEX.
 
-Install dependencies:
+### Architecture
+
+| File | Purpose |
+|------|---------|
+| `autonomous_trader.py` | Main orchestrator — hold-then-sell, TP/SL, multichain |
+| `config/trading_config.py` | V4 contract addresses for 8 chains (5 mainnet + 3 testnet) |
+| `token_registry.py` | SQLite cache for tokens + pools |
+| `token_monitor.py` | ERC20 balance detection |
+| `whitelist.py` | Sender whitelist + token auto-whitelist |
+| `bot_api_server.py` | REST API (port 4000) — multi-token endpoints, emergency controls |
+| `dashboard_server.py` | Serves dashboard (port 3000) |
+| `dashboard.html` | STOP/SELL ALL buttons + multichain views |
+| `start_trader.sh` | Launches API + Dashboard + Trader |
+
+### Critical Rules — DO NOT VIOLATE
+
+- **On-chain pool pricing ONLY**: Token prices come ONLY from the actual V3/V4 pool slot0 (sqrtPriceX96) on MAINNET. For testnet tokens, pricing reads from the corresponding mainnet pool. NEVER use any off-chain API for pricing.
+- **No periodic scanning**: Wallet scan at startup only. Rescan after buys/sells. No polling, no periodic rescans, no watchers.
+- **Testnet is for swaps only**: Testnet chains execute trades. Mainnet chains provide pricing data. Never read prices from testnet pools.
+- **Pool discovery via V3 Factory on-chain only**: `discover_v3_pool()` uses `Factory.getPool()` on-chain. No external API for pool discovery.
+- **DB persists at `data/token_registry.db`**: NOT in `/tmp/`. Survives reboots.
+- **Gas reserve**: NEVER let native ETH drop below `GAS_RESERVE_ETH` (0.01) on any chain.
+- **Whitelisted sender**: `0xef63f3aB80525d12C628038f37C32c4E108969F6`
+
+### How It Works
+
+1. Startup: scan `alchemy_getAssetTransfers` for tokens sent to wallet from whitelisted senders
+2. For each found token with balance: discover pool on-chain via V3 Factory
+3. Record HOLD position with entry price from mainnet pool slot0
+4. Monitor TP/SL (2%/2% default) using mainnet pool prices
+5. Exit via UniversalRouter V4 swap on the token's chain
+
+### Running
+
 ```bash
-cd gateway
-npm install
-npm run build
-npm run test
+bash start_trader.sh        # starts everything
+tail -f /tmp/trader.log     # watch output
+touch /tmp/trader_stop      # emergency stop
+touch /tmp/trader_sell_all  # sell all positions
 ```
 
-## MCP Server (Python)
+### Uniswap V4 Details (official docs only)
 
-Located in `mcp/` subdirectory. Enables AI assistants (Claude, Gemini) to interact with Hummingbot.
-- `hummingbot_mcp/`: Main MCP server implementation
-- `pyproject.toml`: Project configuration
-- `main.py`: Entry point
-
-Install:
-```bash
-cd mcp
-pip install -e .
-```
-
-## IDE Configuration (VS Code/Cursor)
-
-### Required Files
-
-1. `.env`:
-```
-PYTHONPATH=${PYTHONPATH}:${PWD}
-CONDA_ENV=hummingbot
-```
-
-2. `.vscode/settings.json`:
-```json
-{
-    "python.testing.pytestEnabled": true,
-    "python.testing.pytestArgs": [
-        "test",
-        "--ignore=test/hummingbot/connector/derivative/dydx_v4_perpetual/",
-        "--ignore=test/hummingbot/connector/derivative/injective_v2_perpetual/",
-        "--ignore=test/hummingbot/connector/exchange/injective_v2/",
-        "--ignore=test/hummingbot/remote_iface/",
-        "--ignore=test/connector/utilities/oms_connector/",
-        "--ignore=test/hummingbot/strategy/amm_arb/",
-        "--ignore=test/hummingbot/client/command/test_create_command.py"
-    ],
-    "python.envFile": "${workspaceFolder}/.env",
-    "python.terminal.activateEnvironment": true
-}
-```
-
-3. `.vscode/launch.json`:
-```json
-{
-    "version": "0.2.0",
-    "configurations": [
-        {
-            "name": "Python: Hummingbot",
-            "type": "debugpy",
-            "request": "launch",
-            "program": "${workspaceRoot}/bin/hummingbot.py",
-            "console": "integratedTerminal"
-        }
-    ]
-}
-```
-
-## Common Tasks
-
-### Adding a New Exchange Connector
-1. Create folder in `hummingbot/connector/exchange/[exchange_name]/`
-2. Implement classes inheriting from `ExchangePyBase` or `ExchangeBase`
-3. Implement order placement, cancellation, status tracking
-4. Add tests in `test/hummingbot/connector/exchange/[exchange_name]/`
-5. Register in connector registry
-6. Achieve 80% test coverage
-
-### Adding a New Strategy v2
-1. Create controller in `hummingbot/strategy_v2/controllers/[strategy_name]/`
-2. Implement signal generation logic
-3. Create executor in `hummingbot/strategy_v2/executors/`
-4. Add backtesting support
-5. Write comprehensive tests
-
-## Live Trading Simulations
-
-### Dual-Chain Architecture: Mainnet Pricing + Base Sepolia Execution
-Simulated live trading uses two chains in parallel to achieve realistic performance tracking without capital risk.
-
-**Architecture (`uniswap_live_trader.py`):**
-- **Pricing Layer (Mainnet)**: `w3_mainnet` connects to Ethereum Mainnet via `MAINNET_RPC_URL`. Prices are fetched from the Uniswap V3 QuoterV2 (`0x61fFE014bA17989E743c5F6cB21bF9697530B21e`) on the WETH/USDC 0.05% pool (deepest liquidity). Chain ID validated as `1` on startup.
-- **Execution Layer (Base Sepolia)**: `w3_testnet` connects to Base Sepolia via `TESTNET_RPC_URL`. Swaps execute on SwapRouter02 (`0x94cC0AaC535CCDB3C01d6787D6413C739ae12bc4`) using the WETH/USDC 0.30% pool (deepest Base Sepolia liquidity). Chain ID validated as `84532` on startup.
-- **Independent Position Management**: Each BUY creates an independent position tracking its own entry price, USDC allocation, and gas costs. Positions are checked for TP/SL independently every block — no shared state between positions.
-- **Position Persistence**: Open positions are restored from `bot_trades.json` on startup by counting unmatched BUYs vs SELLs. Survives crashes and restarts without orphaning positions.
-- **PnL Tracking (Net of Gas)**: All profit/loss calculations use Mainnet prices. Gas costs (ETH spent on entry + exit swaps) are converted to USD using the Mainnet ETH price and subtracted from gross PnL to compute net PnL per trade.
-- **Resilience**: Trading loop catches all transient errors (DNS, network, RPC) with exponential backoff (2s to 60s). Only `KeyboardInterrupt` stops the trader.
-- **Bidirectional Swaps**: Both WETH->USDC (entry) and USDC->WETH (exit) execute as real on-chain Base Sepolia transactions. Each position swaps only its own USDC allocation on exit.
-
-**Why Base Sepolia over Ethereum Sepolia:**
-Ethereum Sepolia has near-zero Uniswap V3 liquidity — pools drain from a single small trade. Base Sepolia has deep liquidity (1000x more) in the WETH/USDC 0.30% pool, supporting trades up to 1 WETH without SPL errors.
-
-**Why pricing and execution are on different chains:**
-The Mainnet 0.05% pool reflects real market depth and pricing. Testnet pools have artificial liquidity with arbitrary prices. Using Mainnet prices for signals and PnL ensures the simulation tracks real-world performance, while testnet execution proves the swap logic works end-to-end without risking funds.
-
-**SwapRouter02 differences from V1 SwapRouter:**
-- No `deadline` field in the `exactInputSingle` struct params
-- Gas limit must be 600k+ (testnet pools require more gas than mainnet)
-- Approval must target SwapRouter02 address specifically
-
-**Requirements (`.env.local`):**
-```bash
-TESTNET_RPC_URL=https://base-sepolia.g.alchemy.com/v2/YOUR_KEY  # Execution
-MAINNET_RPC_URL=https://eth-mainnet.g.alchemy.com/v2/YOUR_KEY   # Pricing
-ETHEREUM_PRIVATE_KEY=<testnet-key>
-ETHEREUM_WALLET_ADDRESS=<your-wallet>
-```
-
-**Base Sepolia token addresses:**
-- WETH: `0x4200000000000000000000000000000000000006`
-- USDC: `0x036CbD53842c5426634e7929541eC2318f3dCF7e`
-
-**Key files:**
-- `uniswap_live_trader.py` - Dual-chain trader with Mainnet pricing + Base Sepolia execution
-- `bot_api_server.py` - REST API serving real wallet/trade data to dashboard (port 4000)
-- `dashboard.html` - Web dashboard consuming API data (auto-refresh every 2s)
-- `test_real_swap.py` - Quick test script to verify swap mechanics
+- Command: `V4_SWAP = 0x10`
+- Actions: `SWAP_EXACT_IN_SINGLE=6, SETTLE_ALL=12, TAKE_ALL=15`
+- Permit2: `0x000000000022D473030F116dDEE9F6B43aC78BA3` (same all chains)
+- `execute(bytes commands, bytes[] inputs, uint256 deadline)`
+- PoolManager.getSlot0(poolId) for on-chain pricing via sqrtPriceX96
 
 ## Special Considerations
 
@@ -374,9 +222,11 @@ ETHEREUM_WALLET_ADDRESS=<your-wallet>
 3. Cython extensions require special compilation steps
 4. Gateway integration adds complexity for DEX connectors
 5. Configuration files may be modified by tests (avoid running certain tests locally)
+6. **Module waitlist**: See `MODULE_WAITLIST.md` for planned features and development roadmap
 
 ## References
 
 - **Official Docs**: https://hummingbot.org/
 - **Contributing**: See [CONTRIBUTING.md](./CONTRIBUTING.md)
 - **IDE Setup**: See [CURSOR_VSCODE_SETUP.md](./CURSOR_VSCODE_SETUP.md)
+- **Module Roadmap**: See [MODULE_WAITLIST.md](./MODULE_WAITLIST.md)

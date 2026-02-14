@@ -1,0 +1,36 @@
+{
+  "usdc_contracts": {
+    "ethereum": {
+      "mainnet": "0xA0b86991c6218b36c1d19D4a2e9Eb0cE3606eB48",
+      "sepolia": "0x1c7D4B196Cb0C7B01d743Fbc6116a902379C7238"
+    },
+    "base": {
+      "mainnet": "0x833589fCD6eDb6E08f4c7C32D4f71b54bdA02913",
+      "sepolia": "0x036CbD53842c5426634e7929541eC2318f3dCF7e"
+    },
+    "arbitrum": {
+      "mainnet": "0xaf88d065e77c8cc2239327c5edb3a432268e5831",
+      "sepolia": "0x75faf114eafb1BDbe2F0316DF893fd58CE46AA4d"
+    },
+    "avalanche": {
+      "mainnet": "0xB97EF9Ef8734C71904D8002F8b6Bc66Dd9c48a6E",
+      "fuji": "0x5425890298aed601595a70ab815c96711a31bc65"
+    },
+    "optimism": {
+      "mainnet": "0x0b2C639c533813f4Aa9D7837CAf62653d097Ff85",
+      "sepolia": "0x5fd84259d66Cd46123540766Be93DFE6D43130D7"
+    },
+    "polygon": {
+      "mainnet": "0x3c499c542cEF5E3811e1192ce70d8cC03d5c3359",
+      "amoy": "0x9999f7Fea5938fD3b1E26A12c3f2fb024e194f97"
+    },
+    "bsc": {
+      "mainnet": "0x8AC76a51cc950d9822D68b83fE1Ad97B32Cd580d",
+      "testnet": "0x625E7708f30cA1515f627E42D293435FA1326b9A"
+    },
+    "celo": {
+      "mainnet": "0xcebA9300f2b948710d2653dD7B07f33A8B32118C",
+      "alfajores": "0x2F25deB3848C207fc8E0c34035B3Ba7fC157602B"
+    }
+  }
+}
